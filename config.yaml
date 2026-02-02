@@ -1,0 +1,46 @@
+crawler:
+  keywords:
+    - 广告
+    - 标识
+    - 牌
+    - 标志
+    - 宣传
+    - 栏
+    - 文化
+  
+  search:
+    region: 四川
+    info_types:
+      - 招标公告
+    time_range_full: 近三月
+    time_range_incremental: 近一天
+  
+  anti_crawl:
+    min_delay: 1.0
+    max_delay: 3.0
+    max_retries: 3
+
+storage:
+  type: json
+  json_path: ./data/bidding_data.json
+
+scheduler:
+  enabled: false  # MVP阶段先手动执行
+  time: "08:00"
+
+notification:
+  email:
+    enabled: false  # MVP阶段先不启用邮件
+    smtp_server: smtp.example.com
+    smtp_port: 587
+    use_tls: true
+    sender: crawler@example.com
+    sender_password: ""
+    recipients:
+      - user@example.com
+    subject_template: "【招投标监控】今日新增 {count} 条相关项目"
+
+ui:
+  title: "四川省招投标信息监控系统"
+  page_size: 50
+  default_sort: publish_date
