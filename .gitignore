@@ -38,6 +38,7 @@ htmlcov/
 
 # 项目特定
 data/*.json
+!data/bidding_data.json
 logs/*.log
 *.log
 
