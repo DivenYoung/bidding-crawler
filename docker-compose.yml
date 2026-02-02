@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  bidding-ui:
+    build: .
+    container_name: bidding_ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml
+      - ./logs:/app/logs
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    command: streamlit run src/ui/app.py --server.port=8501 --server.headless=true
