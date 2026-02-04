@@ -23,8 +23,20 @@ st.markdown("**数据来源：采招网（四川省）** | 关键字：广告、
 @st.cache_data
 def load_data():
     """加载招投标数据"""
-    data_file = Path("/home/ubuntu/bidding-crawler/data/bidding_data.json")
-    if not data_file.exists():
+    # 尝试多个可能的路径
+    possible_paths = [
+        Path("/tmp/bidding-crawler/data/bidding_data.json"),
+        Path("/home/ubuntu/bidding-crawler/data/bidding_data.json"),
+        Path("data/bidding_data.json"),
+    ]
+    
+    data_file = None
+    for path in possible_paths:
+        if path.exists():
+            data_file = path
+            break
+    
+    if not data_file:
         return pd.DataFrame()
     
     with open(data_file, 'r', encoding='utf-8') as f:
@@ -77,17 +89,35 @@ if 'info_type' in df.columns:
     if selected_type != '全部':
         df = df[df['info_type'] == selected_type]
 
+# 隐藏已过期项目
+st.sidebar.subheader("⏰ 截止日期过滤")
+hide_expired = st.sidebar.checkbox("隐藏已过期项目", value=True)
+
+if hide_expired and 'bidding_deadline' in df.columns:
+    today = datetime.now().date()
+    
+    def is_not_expired(deadline):
+        if not deadline or deadline == '详见内容':
+            return True  # 保留"详见内容"的项目
+        try:
+            deadline_date = pd.to_datetime(deadline).date()
+            return deadline_date >= today
+        except:
+            return True  # 日期格式错误，保留
+    
+    df = df[df['bidding_deadline'].apply(is_not_expired)]
+
 # 关键字位置筛选
-if 'keyword_location_tag' in df.columns:
-    st.sidebar.subheader("关键字位置")
+if 'keyword_location_display' in df.columns:
+    st.sidebar.subheader("📍 关键字位置")
     show_in_title = st.sidebar.checkbox("📄 关键字在标题", value=True)
-    show_in_content = st.sidebar.checkbox("📝 关键字在内容", value=True)
+    show_in_content = st.sidebar.checkbox("📝 关键字在内容中", value=True)
     
     # 根据选择筛选
     if show_in_title and not show_in_content:
-        df = df[df['keyword_location_tag'] == ""]
+        df = df[df['keyword_location_display'].str.contains('标题', na=False)]
     elif show_in_content and not show_in_title:
-        df = df[df['keyword_location_tag'] != ""]
+        df = df[df['keyword_location_display'].str.contains('内容', na=False)]
     # 如果两个都选或都不选，显示全部
 
 # 关键字筛选
@@ -108,13 +138,13 @@ with col2:
         st.metric("招标公告", bidding_count)
 
 with col3:
-    if 'keyword_location_tag' in df.columns:
-        in_title_count = len(df[df['keyword_location_tag'] == ""])
+    if 'keyword_location_display' in df.columns:
+        in_title_count = len(df[df['keyword_location_display'].str.contains('标题', na=False)])
         st.metric("关键字在标题", in_title_count)
 
 with col4:
-    if 'keyword_location_tag' in df.columns:
-        in_content_count = len(df[df['keyword_location_tag'] != ""])
+    if 'keyword_location_display' in df.columns:
+        in_content_count = len(df[df['keyword_location_display'].str.contains('内容', na=False)])
         st.metric("关键字在内容", in_content_count)
 
 # 数据展示
@@ -125,9 +155,10 @@ display_df = df.copy()
 
 # 选择要展示的列并重命名
 column_mapping = {
-    'title': '项目标题（含位置标注）',
+    'title': '项目标题',
     'publish_date': '发布日期',
     'info_type': '信息类型',
+    'keyword_location_display': '关键字位置',
     'owner_unit': '业主单位',
     'budget_amount': '预算金额',
     'procurement_type': '采购类型',
@@ -154,10 +185,15 @@ st.dataframe(
     use_container_width=True,
     height=600,
     column_config={
-        "项目标题（含位置标注）": st.column_config.TextColumn(
-            "项目标题（含位置标注）",
+        "项目标题": st.column_config.TextColumn(
+            "项目标题",
             width="large",
-            help="标题后的括号显示关键字出现位置"
+            help="项目标题（已移除位置标注）"
+        ),
+        "关键字位置": st.column_config.TextColumn(
+            "关键字位置",
+            width="medium",
+            help="关键字出现的位置"
         ),
         "预算金额": st.column_config.TextColumn(
             "预算金额",
@@ -165,7 +201,6 @@ st.dataframe(
         ),
         "详情链接": st.column_config.LinkColumn(
             "详情链接",
-            display_text="查看详情",
             width="small",
         ),
     }
@@ -203,7 +238,7 @@ with col1:
     st.info("""
     **📄 关键字在标题**
     
-    关键字直接出现在项目标题中，标题后无括号标注。
+    关键字直接出现在项目标题中。
     
     示例：
     - 绿色矿山建设标识标牌建设项目谈判公告
@@ -212,13 +247,13 @@ with col1:
 
 with col2:
     st.info("""
-    **📝 关键字在内容**
+    **📝 关键字在内容中**
     
-    关键字出现在项目正文、附件或标书中，标题后有括号标注。
+    关键字出现在项目正文、附件或标书中。
     
     示例：
-    - 沙湾区寨子村传统村落保护改造提升项目-交易公告 (广告,标识等在内容中)
-    - 德阳市涟江路下穿宝成铁路工程材料采购询比公告 (广告,标识等在内容中)
+    - 沙湾区寨子村传统村落保护改造提升项目-交易公告
+    - 德阳市涟江路下穿宝成铁路工程材料采购询比公告
     """)
 
 # 页脚
@@ -227,6 +262,5 @@ st.markdown("""
 <div style='text-align: center; color: gray;'>
     <p>招投标信息监控系统 v1.2 | 数据来源：采招网</p>
     <p>关键字：广告、标识、牌、标志、宣传、栏、文化 | 地区：四川省</p>
-    <p>标题后的括号显示关键字出现位置，如 "(广告,标识等在内容中)"</p>
 </div>
 """, unsafe_allow_html=True)
