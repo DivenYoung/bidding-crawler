@@ -7,7 +7,6 @@ import pandas as pd
 import json
 from pathlib import Path
 from datetime import datetime
-import re
 
 # 页面配置
 st.set_page_config(
@@ -24,7 +23,14 @@ st.markdown("**数据来源：采招网（四川省）** | 关键字：广告、
 @st.cache_data
 def load_data():
     """加载招投标数据"""
-    data_file = Path("/home/ubuntu/bidding-crawler/data/bidding_data.json")
+    # 先尝试加载修复后的数据，如果不存在则加载原数据
+    # 使用相对路径，适配 Streamlit Cloud 部署
+    base_dir = Path(__file__).parent.parent.parent
+    fixed_file = base_dir / "data" / "bidding_data_fixed.json"
+    original_file = base_dir / "data" / "bidding_data.json"
+    
+    data_file = fixed_file if fixed_file.exists() else original_file
+    
     if not data_file.exists():
         return pd.DataFrame()
     
@@ -33,19 +39,15 @@ def load_data():
     
     df = pd.DataFrame(data)
     
-    # 处理标题：移除括号中的位置标注，得到纯净标题
-    if 'title' in df.columns:
-        df['clean_title'] = df['title'].apply(lambda x: re.sub(r'\s*\([^)]*在[^)]*中)\)\s*$', '', x))
-    
-    # 处理关键字位置标注：使用真实的完整标注
-    if 'keyword_location_tag' in df.columns:
-        df['location_display'] = df['keyword_location_tag'].apply(
-            lambda x: '标题' if x == '' else x
-        )
-    
     # 转换日期格式
     if 'publish_date' in df.columns:
         df['publish_date'] = pd.to_datetime(df['publish_date']).dt.date
+    
+    # 处理关键词位置显示
+    if 'keyword_location_tag' in df.columns:
+        df['location_display'] = df['keyword_location_tag'].apply(
+            lambda x: '关键字在标题' if not x or x == '' else x
+        )
     
     return df
 
@@ -88,32 +90,56 @@ if 'info_type' in df.columns:
     if selected_type != '全部':
         df = df[df['info_type'] == selected_type]
 
+# 投标截止日期过滤
+if 'bidding_deadline' in df.columns:
+    st.sidebar.subheader("投标截止日期")
+    filter_expired = st.sidebar.checkbox("隐藏已过期项目", value=True, help="隐藏截止日期在今天之前的项目")
+    
+    if filter_expired:
+        from datetime import date
+        today = date.today()
+        
+        # 过滤逻辑：保留截止日期 >= 今天的项目，或者截止日期为空/详见内容的项目
+        def is_valid_deadline(deadline):
+            if pd.isna(deadline) or not deadline:
+                return True  # 保留空值
+            
+            deadline_str = str(deadline)
+            if '详见' in deadline_str or '内容' in deadline_str:
+                return True  # 保留“详见内容”
+            
+            # 尝试解析日期
+            try:
+                import re
+                if isinstance(deadline, date):
+                    return deadline >= today
+                elif isinstance(deadline, str) and re.match(r'\d{4}-\d{2}-\d{2}', deadline):
+                    deadline_date = pd.to_datetime(deadline[:10]).date()
+                    return deadline_date >= today
+            except:
+                pass
+            
+            return True  # 无法解析的保留
+        
+        df = df[df['bidding_deadline'].apply(is_valid_deadline)]
+
 # 关键字位置筛选
 if 'keyword_location_tag' in df.columns:
     st.sidebar.subheader("关键字位置")
     show_in_title = st.sidebar.checkbox("📄 关键字在标题", value=True)
-    show_in_content = st.sidebar.checkbox("📝 关键字在内容中", value=True)
-    show_in_attachment = st.sidebar.checkbox("📎 关键字在内容或附件中", value=True)
-    show_in_bidding_doc = st.sidebar.checkbox("📋 关键字在内容或标书中", value=True)
+    show_in_content = st.sidebar.checkbox("📝 关键字在内容", value=True)
     
     # 根据选择筛选
-    selected_tags = []
-    if show_in_title:
-        selected_tags.append("")
-    if show_in_content:
-        selected_tags.append("广告,标识等在内容中")
-    if show_in_attachment:
-        selected_tags.append("广告,标识等在内容或附件中")
-    if show_in_bidding_doc:
-        selected_tags.append("广告,标识等在内容或标书中")
-    
-    if selected_tags:
-        df = df[df['keyword_location_tag'].isin(selected_tags)]
+    if show_in_title and not show_in_content:
+        df = df[df['keyword_location_tag'] == ""]
+    elif show_in_content and not show_in_title:
+        df = df[df['keyword_location_tag'] != ""]
+    # 如果两个都选或都不选，显示全部
 
 # 关键字筛选
 keyword_filter = st.sidebar.text_input("标题关键字")
 if keyword_filter:
-    df = df[df['clean_title'].str.contains(keyword_filter, case=False, na=False)]
+    df = df[df['title'].str.contains(keyword_filter, case=False, na=False)]
 
 # 统计信息
 st.header("📈 数据统计")
@@ -145,7 +171,7 @@ display_df = df.copy()
 
 # 选择要展示的列并重命名
 column_mapping = {
-    'clean_title': '项目标题',
+    'title': '项目标题',
     'publish_date': '发布日期',
     'info_type': '信息类型',
     'location_display': '关键字位置',
@@ -178,7 +204,7 @@ st.dataframe(
         "项目标题": st.column_config.TextColumn(
             "项目标题",
             width="large",
-            help="项目的完整标题（已移除位置标注）"
+            help="项目的完整标题"
         ),
         "关键字位置": st.column_config.TextColumn(
             "关键字位置",
@@ -191,7 +217,6 @@ st.dataframe(
         ),
         "详情链接": st.column_config.LinkColumn(
             "详情链接",
-            display_text="查看详情",
             width="small",
         ),
     }
@@ -223,27 +248,36 @@ with col2:
 
 # 关键字位置说明
 st.header("📖 关键字位置说明")
+col1, col2 = st.columns(2)
 
-st.markdown("""
-| 显示内容 | 含义 | 示例 |
-|---------|------|------|
-| **标题** | 关键字直接出现在项目标题中 | 绿色矿山建设**标识标牌**建设项目谈判公告 |
-| **广告,标识等在内容中** | 关键字出现在项目正文内容中 | 沙湾区寨子村传统村落保护改造提升项目 |
-| **广告,标识等在内容或附件中** | 关键字出现在项目正文或附件文件中 | 中国共产党犍为县委员会政法委员会犍为县综治中心运行维护及辅助服务项目 |
-| **广告,标识等在内容或标书中** | 关键字出现在项目正文或标书文件中 | 国家税务总局剑阁县税务局2026年职工食材采购项目 |
+with col1:
+    st.info("""
+    **📄 关键字在标题**
+    
+    关键字直接出现在项目标题中，标题后无括号标注。
+    
+    示例：
+    - 绿色矿山建设标识标牌建设项目谈判公告
+    - 成都市锦江区文化馆2026年文化活动宣传推广项目
+    """)
 
-**说明**：
-- "标题"类型的项目通常更相关，关键字直接出现在项目名称中
-- "内容"类型的项目需要查看详情页确认相关性
-- "附件"或"标书"类型的项目可能包含更详细的技术要求
-""")
+with col2:
+    st.info("""
+    **📝 关键字在内容**
+    
+    关键字出现在项目正文、附件或标书中，标题后有括号标注。
+    
+    示例：
+    - 沙湾区寨子村传统村落保护改造提升项目-交易公告 (广告,标识等在内容中)
+    - 德阳市涟江路下穿宝成铁路工程材料采购询比公告 (广告,标识等在内容中)
+    """)
 
 # 页脚
 st.markdown("---")
-st.markdown(f"""
+st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <p>招投标信息监控系统 v1.4 | 数据来源：采招网</p>
+    <p>招投标信息监控系统 v1.2 | 数据来源：采招网</p>
     <p>关键字：广告、标识、牌、标志、宣传、栏、文化 | 地区：四川省</p>
-    <p>更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+    <p>标题后的括号显示关键字出现位置，如 "(广告,标识等在内容中)"</p>
 </div>
 """, unsafe_allow_html=True)
